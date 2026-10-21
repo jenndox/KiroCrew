@@ -848,6 +848,16 @@
     "components.meetYourMatesIntro.sample_show_first": "Secondary pill under the sample message, the answer that asks to see the change before merging. Imperative, short. Decorative in the dialog, not a real button.",
     "pages.membersPage.entrance_first_mate": "Speech bubble under Mate's large face the first time its chat opens, before it flies into the header and greets; said only while Mate is the only mate on the roster. Mate is the product's name for the standing teammate agent; keep the teammate word the catalog already uses for it.",
     "pages.membersPage.entrance_hello": "The same speech bubble when the roster already holds other mates; {{name}} is Mate's display name and is never translated.",
-    "pages.settings.instancesPanel.restart_to_activate": "Warning banner in Settings -> Remote Crew (and the older Instances panel) shown when remote crew management is turned on but the gateway has not been restarted yet. <restartCmd/> renders the literal CLI command as monospace code -- keep the tag and do not translate it. 'a terminal' is a command-line shell window; 'the computer this dashboard runs on' is the machine whose gateway serves this page, as opposed to the remote crews listed below it, and it may not be the device showing this page."
+    "pages.settings.instancesPanel.restart_to_activate": "Warning banner in Settings -> Remote Crew (and the older Instances panel) shown when remote crew management is turned on but the gateway has not been restarted yet. <restartCmd/> renders the literal CLI command as monospace code -- keep the tag and do not translate it. 'a terminal' is a command-line shell window; 'the computer this dashboard runs on' is the machine whose gateway serves this page, as opposed to the remote crews listed below it, and it may not be the device showing this page.",
+    "components.terminalFindBar.find": "Placeholder text in the terminal scrollback search input; the VERB 'find', as in find-in-page.",
+    "components.terminalFindBar.search_scrollback": "Accessible label for the terminal find input. 'Scrollback' is the terminal's output buffer above the viewport.",
+    "components.terminalFindBar.no_results": "Shown in the terminal find bar when the search term matches nothing.",
+    "components.terminalFindBar.match_count": "Terminal find bar position readout, e.g. '3 of 12'. {{index}} is the current match, {{total}} the match count.",
+    "components.terminalFindBar.match_overflow": "Terminal find bar readout when there are too many matches to track a position; shows just the total count.",
+    "components.terminalFindBar.previous_match": "Terminal find bar button: jump to the previous search match.",
+    "components.terminalFindBar.next_match": "Terminal find bar button: jump to the next search match.",
+    "components.terminalFindBar.close_search": "Terminal find bar button: close the search bar.",
+    "components.bottomTerminalPanel.fullscreen": "Menu item: expand the terminal panel to fill the dashboard area.",
+    "components.bottomTerminalPanel.exit_fullscreen": "Menu item: restore the terminal panel from fullscreen to its previous size."
   }
 }
