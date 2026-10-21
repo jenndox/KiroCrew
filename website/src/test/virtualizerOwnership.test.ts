@@ -202,6 +202,8 @@ describe('phase order (source guard)', () => {
         [P, 'resizeObserverRef.current?.observe(el)'], // late scroller
       ],
       'windowRange.ts': [
+        [P, 'recomputeRef.current = recomputeWindow'], // landing stages read the live recompute
+        [P, 'leadingCapRef.current = null'], // landing stages cleanup
         [P, 'window.setInterval('], // coverage watchdog
         [P, 'prevWindowStartRef.current = windowRange.start'], // older-history crossing
         [P, 'new IntersectionObserver('], // sentinels
