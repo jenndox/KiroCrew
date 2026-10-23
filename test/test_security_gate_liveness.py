@@ -521,7 +521,32 @@ def _url_payload_command(n: int) -> str:
 #: Raised by 12, from 32,601, for the crewmate folder's state files in ``paths_lists``
 #: (owners, kits, revoked approvals, tool access, migration ledger), write-denied
 #: like the folder itself. Data, not rule logic: the matcher is unchanged.
-_PACKAGE_LINE_BUDGET = 32_613
+#:
+#: Raised again, from 32,613, by 290 lines, for ``redaction_patterns._glued_matches``: two
+#: credentials written back to back, where the first's body class takes the second's
+#: prefix, both redact. The JWT header check moves into ``_validated_match`` so the
+#: inner scan shares it; ``_probe_at`` and the two window constants keep the inner scan
+#: linear; ``_URI_START_RE`` / ``_AUTHORITY_END_RE`` find a glued link's start on their own
+#: and match its userinfo to its last `@`, an `eyJ` start is probed on its own and read
+#: whole (only the first `eyJ` of a segment run), and ``_PEM_END_RE`` matches a glued
+#: PEM block to its END marker, as the plain scan does; ``_AWS_LABEL_PREFIX_RE`` /
+#: ``_BEARER_PREFIX_RE`` keep a field label a value already swallowed part of that value
+#: unless ``_TOKEN_CHAR_RE`` shows only its separator was taken;
+#: ``_SPACED_START_RE`` finds PEM, Bearer and AWS field starts on their own (read past a
+#: search bound by ``_START_LOOKAHEAD``, the longest start literal), ``_RUN_REST_RE`` redacts
+#: the rest of the run once the probe budget is spent, once per run and without skipping
+#: a credential that starts inside it; ``_pem_body_end`` lets the inner scan step over
+#: starts before a complete PEM block's END marker, which cannot reach past it;
+#: ``_AWS_SEPARATOR_RE`` tells a field name whose separator a value took before a space
+#: (probed) from one whose separator comes after it (value text);
+#: ``_is_aws_value_run`` / ``_AWS_VALUE_RUN_RE`` let a field label inside an AWS value
+#: run already read to its end skip the probe that would re-read it;
+#: ``_CREDENTIAL_PATTERNS_GLUED`` drops the Discord and link-token start lookbehinds
+#: for a glued start, which always sees the previous credential's last character; the
+#: pass-1 splice takes only the part past the
+#: span before it, and seventeen manifest lines. No branch widened; other
+#: ``_credential_matches`` callers are unchanged unless they pass ``glued=True``.
+_PACKAGE_LINE_BUDGET = 32_903
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
