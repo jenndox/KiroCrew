@@ -762,7 +762,12 @@ def _write_structured_memory(
     # pass and either can arm the latch for the other.
     budget = _EmbedBudget(_EMBED_BUDGET_SECS_PER_PASS, self._logger)
 
+    from kiro_crew.memory_kind_routing import record_kind_routing, route_consolidation_by_kind
+    from kiro_crew.vector_memory import EpisodicWriteOutcome
+
     result, withheld = _withhold_unseen_deletes(result, visible_keys, self._logger)
+    routing = route_consolidation_by_kind(result, self._logger)
+    result = routing.result
 
     # Semantic entries
     semantic_items = result.get("semantic")
@@ -977,6 +982,13 @@ def _write_structured_memory(
                 withheld,
             )
 
+    if routing.decisions:
+        # Under the same hold as every other write of this pass: a switch turned
+        # off, or a lease lost, before the run's first commit refuses the log too.
+        with self._publication_hold_checked(key, commit_state) as publication:
+            if record_kind_routing(vector_store, routing, source):
+                publication.mark_committed()
+
     # Episodic entries
     episodic_items = result.get("episodic")
     if isinstance(episodic_items, list):
@@ -1014,7 +1026,7 @@ def _write_structured_memory(
                 embedding_generation = vector_store.space_generation
                 embedding = None if defer else vector_store.embed_episodic(item["text"])
                 with self._publication_hold_checked(key, commit_state) as publication:
-                    ep_ok = vector_store.write_episodic(
+                    episode_args = dict(
                         text=item["text"],
                         embedding=embedding,
                         embedding_resolved=True,
@@ -1027,8 +1039,38 @@ def _write_structured_memory(
                         defer_embedding=defer,
                         preserve_existing=defer,
                     )
+                    if item["text"] in routing.fallback:
+                        ep_ok = (
+                            vector_store.write_episodic_outcome(**episode_args)
+                            is EpisodicWriteOutcome.WRITTEN
+                        )
+                    else:
+                        ep_ok = vector_store.write_episodic(**episode_args)
                     if ep_ok:
                         publication.mark_committed()
+                    elif item["text"] in routing.fallback:
+                        # A routed event the store would not take as an episode
+                        # (at capacity, or a similar one held) is written as the
+                        # fact it came from, so the span loses nothing.
+                        fallback = routing.fallback[item["text"]]
+                        try:
+                            fallback_conf = float(fallback.get("confidence", 0.5))
+                        except (TypeError, ValueError):
+                            fallback_conf = math.nan
+                        if (
+                            math.isfinite(fallback_conf)
+                            and 0 <= fallback_conf <= 1
+                            and vector_store.set_semantic(
+                                key=fallback["key"],
+                                value=fallback["value"],
+                                confidence=fallback_conf,
+                                source=source,
+                                facets=facets,
+                                defer_embedding=True,
+                            )
+                            is None
+                        ):
+                            publication.mark_committed()
             if ep_ok:
                 written += 1
                 if defer:

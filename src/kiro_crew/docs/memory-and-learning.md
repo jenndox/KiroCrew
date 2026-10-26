@@ -111,6 +111,7 @@ Switches that change what is written or injected:
 | `memory.persistence_enabled: false` | No automatic writes | Stored memory and lessons withheld |
 | `memory.writes_enabled: false` | No automatic writes | Unchanged |
 | `memory.lesson_extraction_enabled: false` | No extracted lessons; other writes and `learn_add` unchanged | Unchanged |
+| `memory.kind_routing: "enforce"` | Consolidation saves an `event` fact as a dated episode and skips a `state` fact (`"shadow"` only logs; default `"off"` does neither) | Unchanged |
 | `memory.inject_memory: false` | Unchanged | Stored memory block withheld |
 | `memory.inject_lessons: false` | Unchanged | Lessons and user-profile blocks withheld |
 
