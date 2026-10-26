@@ -607,7 +607,9 @@ jobs:
     name: Flake Pattern Ratchet
     if: github.event_name != 'push' || vars.MERGE_QUEUE_ENABLED != 'true'
     runs-on: ${{ github.repository == 'kirodotdev/KiroCrew' && contains(fromJSON(vars.CODEBUILD_ACTOR_IDS || '[]'), github.actor_id) && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize') && github.event.pull_request.head.repo.full_name == github.repository)) && format('codebuild-kirocrew-gha-linux-{0}-{1}', github.run_id, github.run_attempt) || 'ubuntu-latest' }}
-    timeout-minutes: 10
+    # 15, not 10: the warn-only network step below may use up to 5 minutes of its
+    # own after the ratchet, and the job cap must not turn that into a red job.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -657,3 +659,18 @@ jobs:
             echo "::error::the flake-pattern ratchet found no base to compare with; this job exists to give it one, so a run that compared nothing is a failed gate, not a pass"
             exit 1
           fi
+      # Warn-first network guard (testing-conventions D10). Runs only the test
+      # files this change adds or changes with KIROCREW_NET_STRICT=1, so a file
+      # that looks up or connects to a host other than loopback is named in the
+      # job summary. continue-on-error keeps it from failing this job or the
+      # check; the script's own exit code shows on the step. No changed test
+      # file, a deleted one, or an unreadable base: it prints why and exits 0.
+      # The file names come from the pull request, so the script passes them to
+      # pytest as an argument list and no shell sees them.
+      - name: Report network reach in the changed test files (warn only)
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: /usr/local/bin/ci-shell {0}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python scripts/net_strict_changed.py
