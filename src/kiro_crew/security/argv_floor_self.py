@@ -421,8 +421,9 @@ def _static_substitution_output(body: str) -> str:
 _STATIC_OUTPUT_UNSAFE_CHARS = frozenset("'\"\\;&|<>(){}$`#~\n\r")
 
 
-#: ``echo`` option words: only a LEADING run of these is consumed as options.
-_ECHO_OPTION_RE = re.compile(r"-[neE]+\Z")
+def _is_echo_option(word: str) -> bool:
+    """True for an ``echo`` option word made only of ``n``/``e``/``E`` flags."""
+    return len(word) > 1 and word[0] == "-" and set(word[1:]) <= {"n", "e", "E"}
 
 
 def _static_substitution_words(body: str) -> "str | None":
@@ -450,7 +451,7 @@ def _static_substitution_words(body: str) -> "str | None":
     program = _shell_normalizer._program_basename(words[0])
     args = words[1:]
     if program == "echo":
-        while args and _ECHO_OPTION_RE.match(args[0]):
+        while args and _is_echo_option(args[0]):
             args = args[1:]
         output = " ".join(args)
     elif program == "printf":
@@ -1096,7 +1097,7 @@ def _glued_command_tail(token: str) -> "str | None":
     if not _redirect_consumes_next(token)[0]:
         return None
     for index in range(len(token) - 1, -1, -1):
-        if token[index] in ";|\n" or _is_command_amp(token, index):
+        if _is_command_separator(token, index):
             return token[index + 1 :]
     return None
 
@@ -1109,15 +1110,18 @@ def _word_before_glued_separator(token: str) -> str:
     """
     cut = min((token.find(c) for c in "<>" if c in token), default=-1)
     head = token[:cut] if cut > 0 else ""
-    for index, char in enumerate(head):
-        if char in ";|\n" or _is_command_amp(head, index):
+    for index in range(len(head)):
+        if _is_command_separator(head, index):
             return head[:index]
     return ""
 
 
-def _is_command_amp(token: str, index: int) -> bool:
-    """True if ``token[index]`` is an ``&`` that separates commands, not a redirection."""
-    if token[index] != "&":
+def _is_command_separator(token: str, index: int) -> bool:
+    """True if ``token[index]`` separates commands (``&`` only outside ``2>&1``/``&>f``)."""
+    char = token[index]
+    if char in ";|\n":
+        return True
+    if char != "&":
         return False
     previous = token[index - 1] if index else ""
     following = token[index + 1] if index + 1 < len(token) else ""

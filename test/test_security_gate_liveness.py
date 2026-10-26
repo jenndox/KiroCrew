@@ -531,7 +531,7 @@ def _url_payload_command(n: int) -> str:
 #: (``status>x&&<cli>``) as the next command's program. ``_static_substitution_words``
 #: expands a literal ``echo``/``printf`` substitution in program position to every
 #: word it prints.
-_PACKAGE_LINE_BUDGET = 32_796
+_PACKAGE_LINE_BUDGET = 32_793
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

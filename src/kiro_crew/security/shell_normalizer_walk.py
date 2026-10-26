@@ -18,6 +18,7 @@ it, so that import path holds. New lexical reading belongs here.
 from __future__ import annotations
 
 import re
+import string
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
@@ -448,14 +449,9 @@ def _redirect_consumes_next(token: str) -> "tuple[bool, bool]":
     return (True, token[cut:].lstrip("<>&") == "")
 
 
-#: A named file-descriptor prefix (``{fd}>file``): bash allocates the descriptor
-#: and stores it in the variable, so the braces belong to the redirection.
-_NAMED_FD_PREFIX_RE = re.compile(r"\{[a-z_][a-z0-9_]*\}\Z")
-
-
-#: A word made only of literal characters: no expansion, quoting, glob or brace
+#: Characters of a plain literal word: no expansion, quoting, glob or brace
 #: syntax, so the text is exactly the argv word bash passes.
-_LITERAL_WORD_RE = re.compile(r"[a-z0-9_./:@%+=,-]+\Z", re.IGNORECASE)
+_LITERAL_WORD_CHARS = frozenset(string.ascii_letters + string.digits + "_./:@%+=,-")
 
 
 def _redirect_word_prefix(token: str) -> str:
@@ -467,26 +463,23 @@ def _redirect_word_prefix(token: str) -> str:
     classifies the whole token as a redirection; this returns the word the
     shell still passes, so an operand reader keeps it.
 
-    ``""`` is returned when the prefix is empty, all digits (a file descriptor,
-    ``2>err``) or a named descriptor (``{fd}>err``), all of which belong to the
-    redirection; when the operator opens a process substitution (``x<(cmd)``);
-    and when the prefix is not a plain literal word (:data:`_LITERAL_WORD_RE`),
-    because an expansion or glob in it decides at run time what bash passes. A
-    trailing ``&`` is the first character of the ``&>`` operator, not part of
-    the word.
+    ``""`` is returned when the prefix is empty or all digits (a file
+    descriptor, ``2>err``), which belong to the redirection; when the operator
+    opens a process substitution (``x<(cmd)``); and when the prefix is not a
+    plain literal word (:data:`_LITERAL_WORD_CHARS`), because an expansion or
+    glob in it decides at run time what bash passes. That last rule also covers
+    a named descriptor (``{fd}>err``), whose braces are not literal characters.
     """
     cut = min((token.find(c) for c in "<>" if c in token), default=-1)
     if cut <= 0 or token.startswith("(", cut + 1):
         return ""
-    head = token[:cut]
-    if head.endswith("&"):
-        # ``&`` never belongs to an argv word: it is the ``&>`` operator's first
-        # character, or a background separator before the operator (``restart&<f``
-        # runs ``restart`` backgrounded, and ``<f`` applies to the next command).
-        head = head.rstrip("&")
-    if not head or head.isdigit() or _NAMED_FD_PREFIX_RE.match(head):
+    # ``&`` never belongs to an argv word: it is the ``&>`` operator's first
+    # character, or a background separator before the operator (``restart&<f``
+    # runs ``restart`` backgrounded, and ``<f`` applies to the next command).
+    head = token[:cut].rstrip("&")
+    if not head or head.isdigit() or not _LITERAL_WORD_CHARS.issuperset(head):
         return ""
-    return head if _LITERAL_WORD_RE.match(head) else ""
+    return head
 
 
 # ── Feature-branch push gate ──

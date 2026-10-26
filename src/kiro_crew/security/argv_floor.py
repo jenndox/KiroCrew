@@ -172,7 +172,6 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
     )
     from kiro_crew.security.argv_floor_self import (  # noqa: F401
         _DEV_MODE_CONFIRM_FLAG,
-        _ECHO_OPTION_RE,
         _RAW_ASSIGNMENT_RE,
         _SELF_CLOUD_DESTRUCTIVE_VERBS,
         _SELF_FLOOR_MACHINERY_RE,
@@ -183,9 +182,10 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _STATIC_OUTPUT_UNSAFE_CHARS,
         _bare_kill_raw_bodies,
         _glued_command_tail,
-        _is_command_amp,
+        _is_command_separator,
         _is_credential_mint,
         _is_dev_mode_out_of_root_confirm,
+        _is_echo_option,
         _is_kill_by_name_program,
         _is_self_cloud_destructive,
         _is_self_file_delivery,
