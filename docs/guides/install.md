@@ -94,7 +94,7 @@ tool. All stores share one model and inference worker. The interactive
 process may run on -- which a CPU-set restriction (`--cpuset-cpus`, `taskset`)
 narrows below the host's core count -- and never below one thread, so the event
 loop keeps a core wherever
-there is one to spare; `memory.embedding_bulk_threads` remains 1. The value 4 means that default policy, so pinning threads
+there is one to spare; where the process may use 12 or more CPUs the default is 8; `memory.embedding_bulk_threads` remains 1. The value 4 means that default policy, so pinning threads
 where the process may use 4 or fewer CPUs takes a different number; any other explicit setting is
 honored up to that same count. Bulk threads may be 0 to inherit the normal
 setting. Background jobs share the configured bulk
