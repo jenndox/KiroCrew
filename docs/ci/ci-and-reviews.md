@@ -1011,16 +1011,15 @@ rather than `ubuntu-latest`: the six fork review lanes (`fork-opus-review`,
 same-repo review lanes (`codex-review`, `claude-review`,
 `first-principles-review`, `design-review`, `ux-review`), and `codeql.yml`.
 
-**Why the fork lanes.** They are the largest block of hosted Linux load with no
-CodeBuild path, and the obstruction is structural rather than unfinished work.
-Registering a CodeBuild-hosted runner requires a GitHub App installation
-credential carrying `Administration:write`, so no CodeBuild runner project can
-hold a truly zero-permission role; and the `workflow_job` webhook payload
-carries no fork indicator at all -- its fields are `head_branch` and `head_sha`,
-never `head_repository` -- so the AWS side cannot filter fork work out and falls
-back to an actor allowlist. The repository-side `runs-on` expressions therefore
-send every fork pull request to a hosted runner. Fork work is permanently hosted
-load, which makes a larger runner the only capacity source that can take it.
+**Why the fork lanes, and why their spend is permanent.** Fork work cannot move
+to the CodeBuild fleet, and the obstruction is structural rather than unfinished
+work: registering a CodeBuild-hosted runner needs a GitHub App installation
+credential carrying `Administration:write`, so no such project can hold a
+zero-permission role, and the `workflow_job` webhook payload carries no fork
+indicator (`head_branch` and `head_sha`, never `head_repository`), so the AWS
+side cannot filter fork work out. Every fork pull request therefore goes to a
+hosted runner by design, which makes a larger runner the only capacity source
+that can take it.
 
 A larger runner satisfies these lanes' isolation requirement the same way
 `ubuntu-latest` does. It is GitHub-managed and ephemeral, and the runner itself
@@ -1036,28 +1035,28 @@ and it already excludes forks through the `Analyze` job's own `if`. Its load is
 also permanent for an unrelated reason: GitHub's CodeQL default setup, which
 this workflow replaced, is off, so there is no second scan to fall back to.
 
-**CodeQL is the one site here that can hold merges, so treat a stuck run as an
-immediate rollback.** `pr-readiness.yml` watches `CodeQL`, and with default
-setup off it resolves the lane to the newest `.github/workflows/codeql.yml` run
-(`codeql_source=advanced`). A queued `Analyze` job is therefore recorded as
-pending rather than skipped, which keeps the required `PR Readiness` status
-pending and holds every same-repo merge, for up to the 24-hour queue timeout.
-`codeql.yml`'s own comment that a skipped `Analyze` job blocks nothing is about
-the SKIPPED state, which is a resolved answer; a job waiting for a runner is a
-different state and readiness treats it differently. So if the group does not
-admit the repository, or is at its `maximum_runners` cap, restore
-`runs-on: ubuntu-latest` on this line at once rather than waiting to see whether
-the queue clears.
+**Every lane moved here can hold merges, so treat any stuck run as an immediate
+rollback.** `pr-readiness.yml` resolves them all through one per-lane loop:
+`claude-review.yml`, `codex-review.yml`, `design-review.yml`, `ux-review.yml`,
+`first-principles-review.yml` and CodeQL sit in `workflow_specs` on the
+same-repo path, and on a fork pull request the fork lanes are read as
+check-runs, where a verdict that has not posted yet counts as pending. A job
+waiting for a runner is therefore recorded as pending rather than skipped --
+SKIPPED is a resolved answer, which is what `codeql.yml`'s comment about a
+skipped `Analyze` job refers to -- so it keeps the required `PR Readiness`
+status pending and holds every merge for up to the 24-hour queue timeout.
+CodeQL has no second scan to fall back to either, since GitHub's default setup
+is off. If the group does not admit the repository, or is at its
+`maximum_runners` cap, restore `runs-on: ubuntu-latest` on the affected line at
+once rather than waiting to see whether the queue clears -- for any of the
+fourteen sites, not just CodeQL.
 
 **Nothing gets faster.** A public-repository `ubuntu-latest` is already 4 vCPU
 and 16 GB, and `kirocrew-linux-4-core` is the same CPU and memory with roughly
-ten times the disk. Job durations should not move; only queue position does.
-Larger-runner minutes are also billed even on a public repository, where
-standard runners are free and unlimited, so this trades a free-but-queued
-resource for a paid-but-unqueued one. What it buys is that these minutes leave
-the standard pool this repository saturates at roughly 44% of all GitHub-funded
-runner hours across the enterprise, and draw on the separate larger-runner
-ceiling instead.
+ten times the disk, so job durations should not move; only queue position does.
+Larger-runner minutes are billed even on a public repository, where standard
+runners are free and unlimited, so this trades a free-but-queued resource for a
+paid-but-unqueued one drawing on a separate ceiling.
 
 Each site targets the **group**, not the `kirocrew-linux-4-core` workflow label.
 Both forms work, since a larger runner is automatically assigned a label
@@ -1090,15 +1089,13 @@ is ever built.
 **Capacity.** The definition is capped at `maximum_runners: 100`, a per-runner
 limit established when the runner is created; raising it goes through GitHub
 Support rather than the organization settings page, so it is not self-service.
-The fourteen sites here are about 46 average concurrent slots. At the 2.0x to
-2.4x peak-to-mean observed across the whole hosted pool that would be 92 to 110
-concurrent, which brushes or exceeds the cap -- but that ratio is an aggregate,
-and a subset's burst pattern need not match it. **Measure this definition's own
-peak rather than extrapolating from the pool's.** Exceeding the cap is not a
-failure state, just a worse one than headroom: jobs queue against our own 100
-slots instead of the shared pool, where the p90 wait has been measured at 1,250
-seconds. The cost of being wrong lands on lanes `PR Readiness` watches, so it
-shows up as slower merges rather than as a broken check.
+**Measure this definition's own peak from the jobs API filtered on
+`runner_group_name` before putting more load on it**, rather than extrapolating
+from the shared pool's peak-to-mean ratio, which is an aggregate a subset's
+burst pattern need not match. Exceeding the cap is not a failure state, just a
+worse one than headroom: jobs queue against our own 100 slots instead of the
+shared pool, and because these lanes feed `PR Readiness` the cost of being
+wrong shows up as slower merges rather than as a broken check.
 
 Rollback is per site and needs no AWS or runner-group change: restore
 `runs-on: ubuntu-latest` on the affected line. A job dispatched to a group that
