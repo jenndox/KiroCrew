@@ -34,27 +34,32 @@ assert _SPEC and _SPEC.loader
 strict = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(strict)
 
-#: Looks up a name nobody on the runner owns, and swallows the refusal like a test
-#: that wraps its call in ``except OSError`` would.
-_LOOKUP = """import socket
+#: The probe fixtures never touch the network. ``sys.audit`` raises the same event
+#: ``socket.getaddrinfo`` raises, which is all the floor's hook reads, so the floor
+#: judges it exactly as it would a real lookup while nothing leaves this host even
+#: if the child fails to load the floor.
+#:
+#: This one looks up a name nobody on the runner owns, and swallows the refusal like a
+#: test that wraps its call in ``except OSError`` would.
+_LOOKUP = """import sys
 
 
 def test_looks_up_a_remote_name():
     try:
-        socket.getaddrinfo("strict-probe.example.invalid", 443)
+        sys.audit("socket.getaddrinfo", "strict-probe.example.invalid", 443, 0, 0, 0)
     except OSError:
         pass
 """
 
-_CLEAN = """import socket
+_CLEAN = """import sys
 
 
 def test_stays_on_loopback():
-    socket.getaddrinfo("localhost", 80)
-    socket.getaddrinfo("127.0.0.1", 80)
+    sys.audit("socket.getaddrinfo", "localhost", 80, 0, 0, 0)
+    sys.audit("socket.getaddrinfo", "127.0.0.1", 80, 0, 0, 0)
 """
 
-_MARKED = """import socket
+_MARKED = """import sys
 
 import pytest
 
@@ -62,7 +67,7 @@ import pytest
 @pytest.mark.real_network
 def test_reaches_out_on_purpose():
     try:
-        socket.getaddrinfo("strict-probe.example.invalid", 443)
+        sys.audit("socket.getaddrinfo", "strict-probe.example.invalid", 443, 0, 0, 0)
     except OSError:
         pass
 """
@@ -87,7 +92,7 @@ def repo(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    for name in ("GITHUB_BASE_REF", "GITHUB_EVENT_NAME", strict.BASE_ENV):
+    for name in ("GITHUB_BASE_REF", "GITHUB_EVENT_NAME", "FLAKE_RATCHET_BASE"):
         monkeypatch.delenv(name, raising=False)
     root = tmp_path / "repo"
     (root / "test").mkdir(parents=True)
@@ -173,7 +178,7 @@ def test_a_change_with_no_test_file_selects_nothing(repo) -> None:
 
 
 def test_an_unreadable_base_is_none_not_an_empty_list(repo, monkeypatch) -> None:
-    monkeypatch.setenv(strict.BASE_ENV, "no-such-ref")
+    monkeypatch.setenv("FLAKE_RATCHET_BASE", "no-such-ref")
     files, how = strict.changed_test_files(repo)
     assert files is None and "no-such-ref" in how
 
@@ -184,10 +189,10 @@ def test_main_skips_without_running_pytest_when_nothing_changed(monkeypatch, cap
 
     monkeypatch.setattr(strict, "changed_test_files", lambda _root=ROOT: ([], "the test base"))
     monkeypatch.setattr(strict, "run_strict", refuse)
-    assert strict.main([]) == 0
+    assert strict.main() == 0
     assert "skipped" in capsys.readouterr().out
     monkeypatch.setattr(strict, "changed_test_files", lambda _root=ROOT: (None, "no base"))
-    assert strict.main([]) == 0
+    assert strict.main() == 0
     assert "nothing checked" in capsys.readouterr().out
 
 
@@ -266,39 +271,78 @@ def test_both_strict_failure_spellings_are_one_finding_and_other_failures_are_co
     assert others == 1
 
 
-def test_a_missing_or_broken_report_is_empty(tmp_path) -> None:
-    assert strict.parse_report(tmp_path / "absent.xml") == ([], 0)
+def test_a_missing_or_broken_report_is_none_not_clean(tmp_path) -> None:
+    assert strict.parse_report(tmp_path / "absent.xml") is None
     broken = tmp_path / "broken.xml"
     broken.write_text("<testsuites", encoding="utf-8")
-    assert strict.parse_report(broken) == ([], 0)
+    assert strict.parse_report(broken) is None
 
 
-def test_the_summary_names_the_finding_and_cannot_forge_a_log_line() -> None:
+def test_a_report_that_declares_an_entity_is_refused_not_expanded(tmp_path) -> None:
+    # The changed test files run in the child, so they can write this file themselves.
+    hostile = tmp_path / "hostile.xml"
+    hostile.write_text(
+        '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x "boom">]><testsuites>&x;</testsuites>',
+        encoding="utf-8",
+    )
+    assert strict.parse_report(hostile) is None
+
+
+def test_the_report_names_the_finding_and_cannot_forge_a_log_line() -> None:
     lines = strict.render(
         ["test/test_a.py"],
-        [("t::x", "name lookup '\n::error::forged `tick`'")],
-        2,
+        ([("t::x", "name lookup '\n::error::forged `tick`'")], 2),
         finished=True,
+        code=1,
         how="the merge-base with main",
     )
     text = "\n".join(lines)
     assert "name lookup" in text and "2 test(s) failed for another reason" in text
     assert not any(line.startswith("::") for line in lines)
     assert "`tick`" not in text
-    clean = strict.render(["test/test_a.py"], [], 0, finished=True, how="main")
+    clean = strict.render(["test/test_a.py"], ([], 0), finished=True, code=0, how="main")
     assert "No test reached past loopback." in "\n".join(clean)
-    partial = strict.render(["test/test_a.py"], [], 0, finished=False, how="main")
-    assert "did not finish" in "\n".join(partial)
 
 
-def test_main_exits_nonzero_on_a_finding_and_zero_on_none(monkeypatch, tmp_path) -> None:
+def test_a_run_that_measured_nothing_never_says_it_was_clean() -> None:
+    for finished, code, words in ((False, -1, "did not finish"), (True, 2, "exited with code 2")):
+        text = "\n".join(
+            strict.render(["test/test_a.py"], None, finished=finished, code=code, how="m")
+        )
+        assert words in text and "Nothing was measured" in text
+        assert "No test reached past loopback" not in text
+
+
+def test_main_writes_the_report_file_and_never_the_step_summary(monkeypatch, tmp_path) -> None:
+    summary = tmp_path / "step-summary.md"
+    report = tmp_path / "report.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv(strict.REPORT_ENV, str(report))
     monkeypatch.setattr(strict, "changed_test_files", lambda _root=ROOT: (["test/test_a.py"], "b"))
     monkeypatch.setattr(strict, "run_strict", lambda *_a, **_k: (True, 1))
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
     monkeypatch.setattr(strict, "parse_report", lambda _path: ([("t::x", "name lookup 'h'")], 0))
-    assert strict.main([]) == 1
-    assert "name lookup 'h'" in (tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert strict.main() == 1
+    assert "name lookup 'h'" in report.read_text(encoding="utf-8")
+    assert not summary.exists(), "an unprivileged step cannot write the step summary on CodeBuild"
     monkeypatch.setattr(strict, "parse_report", lambda _path: ([], 0))
-    assert strict.main([]) == 0
+    assert strict.main() == 0
+    assert "No test reached past loopback." in report.read_text(encoding="utf-8")
     monkeypatch.setattr(strict, "run_strict", lambda *_a, **_k: (False, -1))
-    assert strict.main([]) == 1
+    monkeypatch.setattr(strict, "parse_report", lambda _path: None)
+    assert strict.main() == 1
+    assert "Nothing was measured" in report.read_text(encoding="utf-8")
+
+
+def test_main_reports_a_skip_in_the_file_too(monkeypatch, tmp_path) -> None:
+    report = tmp_path / "report.md"
+    monkeypatch.setenv(strict.REPORT_ENV, str(report))
+    monkeypatch.setattr(strict, "changed_test_files", lambda _root=ROOT: ([], "b"))
+    assert strict.main() == 0
+    assert "adds or changes no test file" in report.read_text(encoding="utf-8")
+
+
+def test_an_unwritable_report_path_does_not_crash_the_step(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv(strict.REPORT_ENV, str(tmp_path / "missing-dir" / "report.md"))
+    monkeypatch.setattr(strict, "changed_test_files", lambda _root=ROOT: ([], "b"))
+    assert strict.main() == 0
+    assert "could not write the report file" in capsys.readouterr().out

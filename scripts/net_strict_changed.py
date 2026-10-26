@@ -28,23 +28,24 @@ argument-list entry after ``--``; no shell ever sees it.
 
 ## Output and exit code
 
-Prints one line per finding and appends the same to ``$GITHUB_STEP_SUMMARY``.
+Prints the report and, when ``$NET_STRICT_REPORT`` names a file, writes the same
+text there. This script never touches ``$GITHUB_STEP_SUMMARY``: on CodeBuild the step
+runs as an unprivileged user that cannot write it, so the workflow publishes the
+report file from a later step under the runner identity.
 Exit 0: nothing to run, no base to compare with, or no finding. Exit 1: at least one
-finding, or pytest did not finish. The workflow step carries ``continue-on-error``
-for the warn-first release, so exit 1 is visible without failing the job.
-Failures that are not a network refusal are counted, not judged: another gate owns
-them.
+finding, or pytest did not finish or left no report. The workflow step carries
+``continue-on-error`` for the warn-first release, so exit 1 is visible without
+failing the job. Failures that are not a network refusal are counted, not judged:
+another gate owns them.
 """
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
 import os
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -53,8 +54,10 @@ ROOT = Path(__file__).resolve().parents[1]
 #: The environment switch the rootdir conftest reads (``_NET_STRICT_ENV`` there).
 STRICT_ENV = "KIROCREW_NET_STRICT"
 
-#: Overrides the base this change is measured against, like ``FLAKE_RATCHET_BASE``.
-BASE_ENV = "NET_STRICT_BASE"
+#: The file the rendered report is written to, when set.
+REPORT_ENV = "NET_STRICT_REPORT"
+
+_HEADER = "### Network reach in the test files this change touches (warn only)"
 
 #: Seconds pytest may run before the script gives up and reports it.
 DEFAULT_TIMEOUT = 240
@@ -112,7 +115,7 @@ def select_test_files(pairs: Sequence[tuple[str | None, str | None]], root: Path
 def changed_test_files(root: Path = ROOT) -> tuple[list[str] | None, str]:
     """``(files, how the base was found)``; files is None when no base is readable."""
     scope = _load_scope()
-    base, how = scope.change_merge_base(BASE_ENV, cwd=root)
+    base, how = scope.change_merge_base(cwd=root)
     if base is None:
         return None, how
     return select_test_files(scope.change_files(base, cwd=root), root), how
@@ -132,17 +135,27 @@ def _detail(message: str) -> str | None:
     return None
 
 
-def parse_report(junit_path: Path) -> tuple[list[tuple[str, str]], int]:
-    """``(network findings, other failures)`` from a pytest junit file.
+def parse_report(junit_path: Path) -> tuple[list[tuple[str, str]], int] | None:
+    """``(network findings, other failures)`` from a pytest junit file, or None.
 
     A finding is ``(test id, what it reached)``; a test that fails both at the call
-    and at teardown is one finding per distinct detail. A missing or unreadable file
-    is ``([], 0)``: the caller decides what a run with no report means.
+    and at teardown is one finding per distinct detail. None means there is no
+    readable report (pytest was killed, crashed, or the file is not valid XML), which
+    is NOT the same as "no finding": the caller must not call that run clean.
+
+    Parsed with defusedxml, never the stdlib parser: the changed test files run in
+    the child, so the child could write any bytes to this file.
     """
     try:
-        tree = ET.parse(junit_path)
-    except (OSError, ET.ParseError):
-        return [], 0
+        from defusedxml import DefusedXmlException
+        from defusedxml.ElementTree import ParseError, parse
+    except ImportError:
+        return None  # never fall back to the stdlib parser
+
+    try:
+        tree = parse(str(junit_path))
+    except (OSError, ParseError, DefusedXmlException):
+        return None
     found: set[tuple[str, str]] = set()
     others = 0
     for case in tree.iter("testcase"):
@@ -202,20 +215,26 @@ def run_strict(
 
 def render(
     files: Sequence[str],
-    findings: Sequence[tuple[str, str]],
-    others: int,
+    report: tuple[Sequence[tuple[str, str]], int] | None,
     *,
     finished: bool,
+    code: int,
     how: str,
 ) -> list[str]:
     """The report lines, shared by the log and the job summary."""
     lines = [
-        "### Network reach in the test files this change touches (warn only)",
+        _HEADER,
         "",
         f"Ran {len(files)} changed test file(s) with `{STRICT_ENV}=1`; base: {_clean(how)}.",
     ]
-    if not finished:
-        lines.append("pytest did not finish inside the time limit; the result below is partial.")
+    if report is None:
+        reason = (
+            f"pytest did not finish within {DEFAULT_TIMEOUT} s"
+            if not finished
+            else f"pytest exited with code {code}"
+        )
+        return [*lines, "", f"{reason} and left no readable report. Nothing was measured."]
+    findings, others = report
     if findings:
         lines += [
             "",
@@ -233,36 +252,33 @@ def render(
     return lines
 
 
-def _write_summary(lines: Sequence[str]) -> None:
-    path = os.environ.get("GITHUB_STEP_SUMMARY")
+def _emit(lines: Sequence[str]) -> None:
+    """Print the report, and write it to ``$NET_STRICT_REPORT`` when that names a file."""
+    text = "\n".join(lines) + "\n"
+    print(text, end="")
+    path = os.environ.get(REPORT_ENV)
     if not path:
         return
     try:
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + "\n")
-    except OSError:
-        pass
+        Path(path).write_text(text, encoding="utf-8")
+    except OSError as exc:
+        print(f"net-strict: could not write the report file: {exc}")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    args = parser.parse_args(argv)
+def main() -> int:
     files, how = changed_test_files(ROOT)
     if files is None:
-        print(f"net-strict: no base to compare with ({_clean(how)}); nothing checked.")
+        _emit([_HEADER, "", f"No base to compare with ({_clean(how)}); nothing checked."])
         return 0
     if not files:
-        print(f"net-strict: this change adds or changes no test file ({_clean(how)}); skipped.")
+        _emit([_HEADER, "", f"This change adds or changes no test file ({_clean(how)}); skipped."])
         return 0
     with tempfile.TemporaryDirectory() as scratch:
         junit = Path(scratch) / "junit.xml"
-        finished, _code = run_strict(files, root=ROOT, junit=junit, timeout=args.timeout)
-        findings, others = parse_report(junit)
-    lines = render(files, findings, others, finished=finished, how=how)
-    print("\n".join(lines))
-    _write_summary(lines)
-    return 0 if finished and not findings else 1
+        finished, code = run_strict(files, root=ROOT, junit=junit)
+        report = parse_report(junit)
+    _emit(render(files, report, finished=finished, code=code, how=how))
+    return 0 if finished and report is not None and not report[0] else 1
 
 
 if __name__ == "__main__":
