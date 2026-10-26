@@ -7434,6 +7434,8 @@
       "agent_specs_rejected": "Especificaciones de agente rechazadas",
       "another_sandbox_already_confines_kiro_crew_so_it": "Otro sandbox ya limita a {{productName}}, por lo que su propio sandbox no puede anidarse dentro. El sandbox de este host no está roto.",
       "ask_the_kiro_crew_owner_to_install_kiro_cli_and": "Pide al propietario de {{productName}} que instale Kiro CLI e inicie sesión en este gateway. Este panel\n          se abrirá en cuanto el gateway esté listo.",
+      "relock_ask_owner": "Pide al propietario de {{productName}} que vuelva a iniciar sesión en este gateway. Este aviso desaparece en cuanto lo haga.",
+      "relock_exact_command_hint": "Este gateway usa su propia copia de Kiro CLI, así que el comando exacto es más largo. Abre el panel en una ventana o pestaña nueva: su pantalla de inicio de sesión lo muestra con un botón para copiarlo. Esta ventana conserva tu trabajo.",
       "check_again": "Comprobar de nuevo",
       "check_again_for_kiro_cli": "Comprobar Kiro CLI de nuevo",
       "check_sign_in_again": "Comprobar el inicio de sesión de nuevo",
