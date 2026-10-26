@@ -258,6 +258,23 @@ describe('pasteTokens', () => {
       expect(out).toBe(`${formatToken(outer)} then ${formatToken(inner)}`)
     })
 
+    it('lets the longer body claim first when the shorter block was pasted earlier', () => {
+      // Paste #1 is a prefix of paste #2, and #2 stands first in the text. In
+      // block order #1 would claim the start of #2's body and leave the rest
+      // of it raw; the longer body claims first, so each token lands on its
+      // own body and the fold is the inverse of expandAll.
+      const short = block({ id: 's', seq: 1, lines: 3, content: 'alpha\nbeta\ngamma' })
+      const long = block({ id: 'l', seq: 2, lines: 4, content: 'alpha\nbeta\ngamma\ndelta' })
+      const display = `${formatToken(long)}\n${formatToken(short)}`
+      const out = recollapsePastes(expandAll(display, [short, long]), [short, long])
+      expect(out).toBe(display)
+      // Same-length bodies keep their own order: repeated sends of one paste
+      // still collapse to their own tokens in document order.
+      const a = block({ id: 'a', seq: 1, lines: 1, content: 'AAA' })
+      const b = block({ id: 'b', seq: 2, lines: 1, content: 'AAA' })
+      expect(recollapsePastes('AAA x AAA', [a, b])).toBe(`${formatToken(a)} x ${formatToken(b)}`)
+    })
+
     it('does not exceed the byte size of the input (huge paste collapses small)', () => {
       const huge = 'x\n'.repeat(30_000)
       const b = block({ id: 'a', seq: 1, lines: 30_001, content: huge })

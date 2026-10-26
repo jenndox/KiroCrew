@@ -328,12 +328,17 @@ export function expandAll(text: string, blocks: PasteBlock[]): string {
  *
  * Replaces the FIRST non-overlapping occurrence of each block in document
  * order, so repeated sends of the same paste each collapse to their own token.
- * A block whose content is not found verbatim is skipped (that region renders
- * as-is). Text before `from` is kept verbatim (e.g. a recorded knowledge head).
- * Returns `content` unchanged when nothing matched.
+ * Blocks claim their body longest first (same-length blocks in their own
+ * order): a body that is a prefix of a longer sibling's body would otherwise
+ * claim the start of that sibling and leave the longer body's tail raw, and a
+ * shorter block that stands AFTER the longer one would be read as the longer
+ * one's start. A block whose content is not found verbatim is skipped (that
+ * region renders as-is). Text before `from` is kept verbatim (e.g. a recorded
+ * knowledge head). Returns `content` unchanged when nothing matched.
  */
 export function recollapsePastes(content: string, blocks: PasteBlock[], from = 0): string {
   if (!content || !blocks.length) return content
+  const longestFirst = blocks.slice().sort((a, b) => b.content.length - a.content.length)
   interface Hit { start: number; end: number; block: PasteBlock }
   const hits: Hit[] = []
   const claimed: Array<[number, number]> = []
@@ -351,7 +356,7 @@ export function recollapsePastes(content: string, blocks: PasteBlock[], from = 0
     }
     return -1
   }
-  for (const b of blocks) {
+  for (const b of longestFirst) {
     if (!b.content) continue
     // Prefer a verbatim match. Fall back to the trailing-whitespace-trimmed
     // block content: the backend strips trailing whitespace from the stored

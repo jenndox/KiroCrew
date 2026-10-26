@@ -12,6 +12,7 @@ import { hasSubagentCompletionPrefix } from '../pages/chat/subagentCompletion'
 import { prependQuote, quoteBlock, quoteExcerpt, readMessageQuote, stripQuoteBlock } from '../chat-core/composer/messageQuote'
 import { useLanguageGeneration } from '../i18n/useLanguageGeneration'
 import { splitKnowledgeEnvelope } from '../pages/chat/useKnowledgeFetch'
+import { expandAll, findTokenRanges, pruneBlocks, recollapsePastes, saveStoredPaste, type PasteBlock } from '../utils/pasteTokens'
 /** System-injected sub-agent completion deliveries waiting for the busy slot.
  *  These are NOT user messages: they must not be editable/cancellable (either
  *  would silently lose a finished agent's result) and rendering each as a
@@ -56,18 +57,51 @@ export function isAppMessageQueued(m: ChatMessage): boolean {
  *  typed, so neither belongs on the card or in the editor. `quote` is set only
  *  when the content really starts with that quote's block, and `envelope` is
  *  the knowledge envelope as sent (empty when there is none), kept verbatim so
- *  an edit can put it back and the agent still receives the knowledge. */
+ *  an edit can put it back and the agent still receives the knowledge.
+ *
+ *  A collapsed `[ Paste #N ]` token is the third kind of model-only text, but
+ *  it expands IN PLACE with no marker around it, so the text alone cannot give
+ *  it back. The blocks ride the row as `meta.pastes` (`queueEntryPastes`: the
+ *  sending browser's paste side table, the same source the sent bubble is
+ *  re-collapsed from), and `own` folds each block's text back to its token
+ *  (`recollapsePastes`), so the card shows the token the bubble will show and
+ *  the editor opens on it. A row with no blocks shows the text as sent. */
 function splitQueuedContent(m: ChatMessage): {
   quote: ReturnType<typeof readMessageQuote>
   envelope: string
   own: string
+  pastes: PasteBlock[]
 } {
-  if (isAppMessageQueued(m)) return { quote: null, envelope: '', own: stripAppEnvelope(m.content) }
+  if (isAppMessageQueued(m)) return { quote: null, envelope: '', own: stripAppEnvelope(m.content), pastes: [] }
   const carried = readMessageQuote(m.meta as Record<string, unknown> | undefined)
   const quote = carried && m.content.startsWith(quoteBlock(carried)) ? carried : null
   const afterQuote = quote ? stripQuoteBlock(m.content, quote) : m.content
   const split = splitKnowledgeEnvelope(afterQuote)
-  return { quote, envelope: split?.head ?? '', own: split ? split.rest : afterQuote }
+  const expanded = split ? split.rest : afterQuote
+  const folded = foldQueuedPastes(expanded, queuedPastes(m))
+  return { quote, envelope: split?.head ?? '', own: folded?.own ?? expanded, pastes: folded?.pastes ?? [] }
+}
+
+/** Fold a queued entry's paste bodies back to their tokens, or refuse. The
+ *  fold is accepted only when EVERY block found its body and the tokens
+ *  expand back to the text as sent: an edit commits by expanding the tokens
+ *  the editor shows, so a fold that attributed a body to the wrong block, or
+ *  left one body raw beside its sibling's token, would send text the user did
+ *  not choose when they delete a token. A refused fold shows the text as sent
+ *  and the editor edits it as plain text, with no blocks to expand. */
+function foldQueuedPastes(expanded: string, pastes: PasteBlock[]): { own: string; pastes: PasteBlock[] } | null {
+  if (!pastes.length) return null
+  const own = recollapsePastes(expanded, pastes)
+  // Compared with trailing whitespace off: the gateway strips it from the
+  // stored text, so a paste that ended the message lost its own.
+  if (findTokenRanges(own, pastes).length !== pastes.length || expandAll(own, pastes).trimEnd() !== expanded.trimEnd()) return null
+  return { own, pastes }
+}
+
+/** The paste blocks a queued row carries (`queueEntryPastes` put them there). */
+function queuedPastes(m: ChatMessage): PasteBlock[] {
+  const pastes = m.meta?.pastes
+  return Array.isArray(pastes) ? (pastes as PasteBlock[]) : []
 }
 
 /** The entry's own words: the content with a carried quote's block and a
@@ -106,12 +140,35 @@ export function queuedDisplayText(m: ChatMessage): string {
  *  typed words (a quote plus knowledge) has its wire trimmed right after the
  *  close marker, so the blank line a fresh send puts between the envelope and
  *  the words is put back here; without it the edit would glue the words onto
- *  the marker line and the envelope would no longer be found. */
+ *  the marker line and the envelope would no longer be found.
+ *
+ *  A `[ Paste #N ]` token the editor showed expands again here, from the
+ *  row's blocks, so the agent receives the pasted text and never the bare
+ *  token; a token the edit removed takes its paste with it, as deleting the
+ *  token in the composer does. Pure: the commit records the edit in the paste
+ *  side table separately (`recordEditedPastes`), because this also builds the
+ *  live draft a side surface reads on every keystroke. */
 function reglueQuote(m: ChatMessage, edited: string): string {
-  const { quote, envelope } = splitQueuedContent(m)
-  const sep = envelope && edited && !envelope.endsWith('\n') ? '\n\n' : ''
-  const body = envelope + sep + edited
+  const { quote, envelope, pastes } = splitQueuedContent(m)
+  const live = pruneBlocks(edited, pastes)
+  const words = live.length ? expandAll(edited, live) : edited
+  const sep = envelope && words && !envelope.endsWith('\n') ? '\n\n' : ''
+  const body = envelope + sep + words
   return quote ? prependQuote(body, quote) : body
+}
+
+/** Record a COMMITTED edit that kept a paste token in the paste side table,
+ *  under the wire `reglueQuote` built for it. Only on the commit: the live
+ *  draft runs through `reglueQuote` on every keystroke, and a record per
+ *  keystroke, each holding the whole paste, would push the sent messages'
+ *  records out of the table's entry and byte budget. No attachment list goes
+ *  on the record: the gateway prunes the entry's list to the markers the edit
+ *  kept, and a list recorded here would be put back over it on a reload
+ *  (`mergePreservedPastes` prefers the record's `files`). */
+function recordEditedPastes(m: ChatMessage, edited: string, wire: string): void {
+  const { quote, pastes } = splitQueuedContent(m)
+  const live = pruneBlocks(edited, pastes)
+  if (live.length) saveStoredPaste(wire.trim(), quote ? prependQuote(edited, quote) : edited, live)
 }
 
 /** Split a slot's message list into the three things a pane surface needs:
@@ -517,7 +574,7 @@ function QueueStackInner({ messages, onCancel, onInterrupt, onEdit, onEditDraft,
                     <>
                       <EditInput
                         initial={queuedOwnText(m)}
-                        onCommit={v => commitEdit(queueId!, reglueQuote(m, v))}
+                        onCommit={v => { const wire = reglueQuote(m, v); recordEditedPastes(m, v, wire); commitEdit(queueId!, wire) }}
                         onCancel={cancelEdit}
                         // Blank typed words report no draft, checked before the
                         // reglue: the card's quote or knowledge envelope would

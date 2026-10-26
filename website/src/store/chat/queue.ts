@@ -5,7 +5,15 @@ import type { PayloadAction } from '@reduxjs/toolkit'
 import type { ChatMessage } from '../../types'
 import type { ChatState } from './state'
 import { quoteBlock } from '../../chat-core/composer/messageQuote'
-import { isUnsafeKey, queueEntryAttachments, queueEntryQuote, queueEntrySendId, safeKey, type QueueEntryAttachments, type SlotQueueItem } from './wire'
+import { isUnsafeKey, queueEntryAttachments, queueEntryPastes, queueEntryQuote, queueEntrySendId, safeKey, type QueueEntryAttachments, type SlotQueueItem } from './wire'
+import type { PasteBlock } from '../../utils/pasteTokens'
+
+/** A queued row's paste blocks (`queueEntryPastes` put them there): what an
+ *  edit keeps and what the user row the entry drains into receives. */
+function queuedRowPastes(meta: Record<string, unknown> | undefined): { pastes?: PasteBlock[] } {
+  const pastes = meta?.pastes
+  return Array.isArray(pastes) && pastes.length ? { pastes: pastes as PasteBlock[] } : {}
+}
 
 /** Replace only this send's provisional row; a queue acceptance is not execution.
  *
@@ -71,8 +79,10 @@ export function hydrateQueuedBubbles(
     if (liveIds.has(queueId)) continue
     // The lists ride the row's meta under the same keys a user row carries
     // them, so a cancel on THIS tab restores a spaced path exactly even
-    // though the send happened on another tab or before a reload.
-    appendCorrelatedQueue(base, { role: 'queued', content, cls: 'msg msg-queued', ts, meta: { queueId, ...(kind ? { kind } : {}), ...(appLabel ? { appLabel } : {}), ...(quote ? { quote } : {}), ...attachments } })
+    // though the send happened on another tab or before a reload. The paste
+    // blocks ride the same way, so the card draws the `[ Paste #N ]` token
+    // the sent bubble draws, not the expanded wire text.
+    appendCorrelatedQueue(base, { role: 'queued', content, cls: 'msg msg-queued', ts, meta: { queueId, ...(kind ? { kind } : {}), ...(appLabel ? { appLabel } : {}), ...(quote ? { quote } : {}), ...attachments, ...queueEntryPastes(content) } })
   }
   for (const row of live) appendCorrelatedQueue(base, row)
   return base
@@ -142,7 +152,10 @@ export const queueReducers = {
           msgs.splice(ei, 1)
         }
       }
-      const rowMeta: Record<string, unknown> = { ...queueEntryAttachments(queued?.meta), ...queueEntryQuote(queued?.meta), ...queueEntryAttachments(meta), ...queueEntryQuote(meta), ...queueEntrySendId(meta) }
+      // The queued row's paste blocks go with the text: the user row renders
+      // them as the chip at once (`recollapsePastes` on render) instead of
+      // showing the expanded paste until the next reconcile finds the blocks.
+      const rowMeta: Record<string, unknown> = { ...queueEntryAttachments(queued?.meta), ...queueEntryQuote(queued?.meta), ...queuedRowPastes(queued?.meta), ...queueEntryAttachments(meta), ...queueEntryQuote(meta), ...queueEntrySendId(meta) }
       if (queue_id && sendId) rowMeta.queueId = queue_id
       if (at >= 0 && clientTs) rowMeta.clientTs = clientTs
       delete rowMeta.optimistic
@@ -188,6 +201,18 @@ export const queueReducers = {
     const idx = msgs.findIndex(m => m.role === 'queued' && (m.meta?.queueId as string) === queue_id)
     if (idx < 0) return
     msgs[idx].content = content
+    // The row keeps the blocks whose text the NEW content still holds: a
+    // kept token expanded again on commit (`QueueStack`), so its text is
+    // there; a token the edit removed took its text with it. Decided on the
+    // text, not on a side-table read: the gateway may renumber an attachment
+    // marker in the echoed content, and the text the card records the edit
+    // under then differs from the echo while the paste in it is unchanged.
+    {
+      const { pastes: prior } = queuedRowPastes(msgs[idx].meta)
+      const { pastes: _p, ...rest } = msgs[idx].meta ?? {}
+      const kept = prior?.filter(b => content.includes(b.content) || content.includes(b.content.trimEnd())) ?? []
+      msgs[idx].meta = { ...rest, ...(kept.length ? { pastes: kept } : {}) }
+    }
     if (attachments) {
       const { files: _f, dirs: _d, ...rest } = msgs[idx].meta ?? {}
       msgs[idx].meta = { ...rest, ...attachments }
@@ -231,8 +256,9 @@ export const queueReducers = {
       // can land before a delayed `queue_push` for the same entry. Appending
       // blindly would duplicate the row; keep the existing one.
       // Same row shape as `hydrateQueuedBubbles`: the frame's attachment
-      // lists ride the row so a cancel restores from them.
-      appendCorrelatedQueue(msgs, { role: 'queued', content, cls: 'msg msg-queued', ts, meta: { queueId, ...queueEntryAttachments(meta), ...queueEntryQuote(meta), ...queueEntrySendId(meta) } })
+      // lists ride the row so a cancel restores from them, and the paste
+      // blocks so the card shows the token.
+      appendCorrelatedQueue(msgs, { role: 'queued', content, cls: 'msg msg-queued', ts, meta: { queueId, ...queueEntryAttachments(meta), ...queueEntryQuote(meta), ...queueEntrySendId(meta), ...queueEntryPastes(content) } })
     },
     prepare(payload: { slot: string; content: string; ts: string; queue_id?: string; meta?: unknown }) {
       return { payload: { ...payload, queueId: payload.queue_id || crypto.randomUUID() } }
