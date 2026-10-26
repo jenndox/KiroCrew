@@ -17,7 +17,9 @@ the tradeoff of a cheap, zero-tuning guard. One narrow enforcement point sits
 on top: :func:`admission_check` gates *background* work admission (scheduled
 cron firings, task-runner steps) while posture is CRITICAL, so the scheduler
 stops piling work onto a host that is about to freeze. Subagent spawns are not
-gated here: they admit on their own memory floor (``agent.spawn_min_memory_gb``). Direct user chat turns
+gated here: they admit on their own memory floor (``agent.spawn_min_memory_gb``),
+which the pull tool reports on the gate's own figure (:func:`spawn_floor_reading`)
+because the posture can read AMPLE while that floor holds every start. Direct user chat turns
 and the gateway's own operation are never gated, and the gate fails open on an
 unknown posture. (A hard, cross-session admission lease is a separate, heavier
 design.)
@@ -779,6 +781,129 @@ def _classify(available_gb: float, pressure_gb: float, critical_gb: float) -> st
     if pressure_gb > 0 and available_gb <= pressure_gb:
         return POSTURE_TIGHT
     return POSTURE_AMPLE
+
+
+#: What a blocked reading means, on the summary line. Scoped to local top-level
+#: starts: a running subagent's shared nested start skips its own start charge,
+#: and a remote session's children owe no floor at all.
+_BLOCKED_NOTE = "new top-level subagents wait in the queue"
+
+
+@dataclass(frozen=True)
+class SpawnFloorReading:
+    """The subagent spawn floor checked against the gate's own memory figure.
+
+    The posture reads the reclaimable sum (``_available_memory_gb``) against
+    ``resource_pressure_gb``; the spawn gate reads its own, stricter figure
+    (``check_memory_available``) against ``agent.spawn_min_memory_gb`` plus the
+    price of the start (``subagent_manager/admission/gate.py``). The two can
+    disagree, so a posture of AMPLE does not say a subagent can start. This
+    reading says it with the gate's own figure and prices.
+
+    The bar assumes nothing is warming and the cheapest start: the live reserve
+    for starts still warming lives in the gateway's manager, so it is a lower
+    bound.
+    """
+
+    floor_gb: float  # agent.spawn_min_memory_gb; <= 0 disables the gate
+    available_gb: float  # the gate's figure; -1.0 when unmeasurable (gate fails open)
+    min_start_gb: float  # floor plus the lowest price a top-level start can carry
+    unknown_note: str = ""  # set when the gate defers on a figure it cannot read
+    remote: bool = False  # the caller's workspace is remote: its children owe no floor
+
+    @property
+    def enabled(self) -> bool:
+        return self.floor_gb > 0
+
+    @property
+    def blocked(self) -> bool:
+        """True when no local top-level subagent start can be admitted right now."""
+        if not self.enabled or self.remote:
+            return False
+        if self.unknown_note:
+            return True
+        return 0 <= self.available_gb < self.min_start_gb
+
+    def summary_line(self) -> str:
+        """The pull tool's line for the floor, stated against the gate's figure."""
+        if not self.enabled:
+            return "  Subagent spawn floor: off (agent.spawn_min_memory_gb is 0)"
+        head = f"  Subagent spawn floor: {self.floor_gb:g} GB must stay free after a start"
+        if self.remote:
+            return (
+                f"{head}; not applied to this session's subagents, whose workspace is "
+                "remote (only their engines start here)"
+            )
+        if self.unknown_note:
+            return f"{head}; {self.unknown_note} — BLOCKED: {_BLOCKED_NOTE}"
+        if self.available_gb < 0:
+            return f"{head}; the gate's memory figure is unreadable here, so starts are not held"
+        line = (
+            f"{head}; the gate reads {self.available_gb:.1f} GB, a top-level start needs at least "
+            f"{self.min_start_gb:.2f} GB (more for a dedicated one or while other "
+            "starts are warming)"
+        )
+        if self.blocked:
+            return line + f" — BLOCKED: {_BLOCKED_NOTE}"
+        return line
+
+    def blocked_sentence(self) -> str:
+        """One sentence saying spawning is blocked and why, or ``""``."""
+        if not self.blocked:
+            return ""
+        if self.unknown_note:
+            return (
+                f"new top-level subagents cannot start now ({self.unknown_note}); "
+                "they wait in the queue"
+            )
+        return (
+            f"new top-level subagents cannot start now — the gate reads "
+            f"{self.available_gb:.1f} GB and one needs at least {self.min_start_gb:.2f} GB; "
+            "they wait in the queue until memory frees"
+        )
+
+
+def _read_spawn_floor_figure(min_gb: float) -> tuple[float, str]:
+    """The spawn gate's own memory figure (GB, -1 unmeasurable) and its cause."""
+    from kiro_crew.subagent import check_memory_available, pop_memory_check_cause
+
+    pop_memory_check_cause()  # drop a cause left by any earlier reading
+    _ok, avail = check_memory_available(min_gb=min_gb)
+    return avail, pop_memory_check_cause()
+
+
+def spawn_floor_reading(cfg: object | None = None, *, remote: bool = False) -> SpawnFloorReading:
+    """Check ``agent.spawn_min_memory_gb`` against the gate's figure. Never raises.
+
+    The prices are the gate's helpers (``start_pricing``): the cheapest
+    top-level start is a shared one at the lowest dedicated price
+    (``subagent_cost_gb``). *remote* is set when the calling session's workspace
+    is remote: the gate prices that session's children without the floor, so no
+    reading is taken and nothing is reported as blocked. A failure reads as a
+    disabled floor, so the tool says nothing it did not measure.
+    """
+    try:
+        from kiro_crew.subagent import (
+            MEMORY_CAUSE_CGROUP_USAGE_UNREADABLE,
+            _shared_start_price_gb,
+            _spawn_memory_floor_and_cost,
+        )
+
+        agent_cfg = getattr(cfg if cfg is not None else _load_config(), "agent", None)
+        floor_gb, cost_gb = _spawn_memory_floor_and_cost(agent_cfg)
+        if floor_gb <= 0 or remote:
+            return SpawnFloorReading(floor_gb, -1.0, floor_gb, remote=remote)
+        min_start = floor_gb + _shared_start_price_gb(cost_gb)
+        avail, cause = _read_spawn_floor_figure(min_start)
+        note = (
+            "memory headroom unknown: a cgroup memory limit is set but its usage is unreadable"
+            if cause == MEMORY_CAUSE_CGROUP_USAGE_UNREADABLE
+            else ""
+        )
+        return SpawnFloorReading(floor_gb, avail, min_start, note)
+    except Exception:  # pragma: no cover - defensive; the probe must never raise
+        logger.debug("spawn floor reading failed", exc_info=True)
+        return SpawnFloorReading(0.0, -1.0, 0.0)
 
 
 def _load_config() -> object | None:

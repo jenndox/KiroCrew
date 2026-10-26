@@ -37,6 +37,9 @@ def _unmeasurable_slice(monkeypatch: pytest.MonkeyPatch) -> None:
     :data:`_REAL_SLICE_PROBE`, captured past this default.
     """
     monkeypatch.setattr(rs, "_read_agent_slice_tasks", lambda: (-1, -1, -1))
+    # The pull tool also reads the spawn gate's own figure; pin it clear of any
+    # floor so a tool case never turns on the CI host's free memory.
+    monkeypatch.setattr(rs, "_read_spawn_floor_figure", lambda _min_gb: (32.0, ""))
 
 
 #: The genuine probe, bound at import before the autouse default can replace it.
@@ -812,3 +815,104 @@ def test_a_remote_session_line_scopes_the_reading_to_the_gateway(free_gb):
 
 def test_a_clear_gateway_keeps_a_remote_session_silent():
     assert _gateway_status(20.0, rs.POSTURE_AMPLE).context_line(remote=True) == ""
+
+
+# ── the spawn floor ─────────────────────────────────────────────────────────
+
+
+def _spawn_cfg(floor: float, cost: float = 0.5) -> SimpleNamespace:
+    return SimpleNamespace(agent=SimpleNamespace(spawn_min_memory_gb=floor, subagent_cost_gb=cost))
+
+
+def _gate_figure(monkeypatch: pytest.MonkeyPatch, avail: float, cause: str = "") -> list[float]:
+    asked: list[float] = []
+
+    def read(min_gb: float) -> tuple[float, str]:
+        asked.append(min_gb)
+        return avail, cause
+
+    monkeypatch.setattr(rs, "_read_spawn_floor_figure", read)
+    return asked
+
+
+def test_spawn_floor_prices_starts_with_the_gate_helpers(monkeypatch) -> None:
+    from kiro_crew.subagent import _shared_start_price_gb
+
+    asked = _gate_figure(monkeypatch, 8.0)
+    reading = rs.spawn_floor_reading(_spawn_cfg(2.0))
+    assert reading.floor_gb == 2.0
+    assert reading.min_start_gb == pytest.approx(2.0 + _shared_start_price_gb(0.5))
+    # The gate's figure is read against the cheapest bar, as the gate reads it.
+    assert asked == [pytest.approx(reading.min_start_gb)]
+    assert not reading.blocked
+    assert "BLOCKED" not in reading.summary_line()
+
+
+def test_a_floor_above_the_gate_figure_is_blocked(monkeypatch) -> None:
+    """The reported case: a 4 GB floor with ~3.3 GB available holds every start."""
+    _gate_figure(monkeypatch, 3.3)
+    reading = rs.spawn_floor_reading(_spawn_cfg(4.0))
+    assert reading.blocked
+    assert "BLOCKED: new top-level subagents wait in the queue" in reading.summary_line()
+    assert "the gate reads 3.3 GB" in reading.blocked_sentence()
+    # Scoped to top-level starts: a running subagent's shared nested start
+    # skips its own start charge, so it can clear a lower bar.
+    assert "new top-level subagents cannot start now" in reading.blocked_sentence()
+
+
+def test_a_remote_caller_takes_no_reading_and_is_never_blocked(monkeypatch) -> None:
+    """The gate prices a remote session's children without the floor
+    (``remote_child``), so the tool must not report the floor as holding them."""
+    asked = _gate_figure(monkeypatch, 0.5)
+    reading = rs.spawn_floor_reading(_spawn_cfg(4.0), remote=True)
+    assert asked == []
+    assert not reading.blocked
+    assert reading.blocked_sentence() == ""
+    assert "not applied to this session's subagents" in reading.summary_line()
+
+
+def test_a_disabled_floor_takes_no_reading(monkeypatch) -> None:
+    asked = _gate_figure(monkeypatch, 0.1)
+    reading = rs.spawn_floor_reading(_spawn_cfg(0.0))
+    assert asked == []
+    assert not reading.blocked
+    assert reading.summary_line() == "  Subagent spawn floor: off (agent.spawn_min_memory_gb is 0)"
+
+
+def test_an_unmeasurable_gate_figure_fails_open_like_the_gate(monkeypatch) -> None:
+    _gate_figure(monkeypatch, -1.0)
+    reading = rs.spawn_floor_reading(_spawn_cfg(2.0))
+    assert not reading.blocked
+    assert "starts are not held" in reading.summary_line()
+
+
+def test_an_unreadable_cgroup_usage_is_blocked_with_its_cause(monkeypatch) -> None:
+    from kiro_crew.subagent import MEMORY_CAUSE_CGROUP_USAGE_UNREADABLE
+
+    _gate_figure(monkeypatch, 0.0, MEMORY_CAUSE_CGROUP_USAGE_UNREADABLE)
+    reading = rs.spawn_floor_reading(_spawn_cfg(2.0))
+    assert reading.blocked
+    assert "usage is unreadable" in reading.blocked_sentence()
+
+
+def test_tool_says_spawning_is_blocked_on_an_ample_posture(monkeypatch) -> None:
+    """End to end through the tool: AMPLE on the posture's figure, while the
+    gate's own figure misses the floor, must not read as ample headroom."""
+    from kiro_crew import mcp_core
+
+    fake = rs.ResourceStatus(
+        available_gb=8.0,
+        cpu_count=8,
+        load_per_cpu=0.5,
+        posture=rs.POSTURE_AMPLE,
+        pressure_gb=4.0,
+        critical_gb=2.0,
+    )
+    monkeypatch.setattr(rs, "probe", lambda cfg=None: fake)
+    monkeypatch.setattr(rs, "_load_config", lambda: _spawn_cfg(4.0))
+    _gate_figure(monkeypatch, 3.3)
+    out = mcp_core._call_tool_inner("resource_status", {})
+    assert "Posture: AMPLE" in out
+    assert "Subagent spawn floor: 4 GB must stay free after a start" in out
+    assert "Guidance: new top-level subagents cannot start now" in out
+    assert "ample headroom" not in out
