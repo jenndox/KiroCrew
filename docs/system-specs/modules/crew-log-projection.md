@@ -1289,8 +1289,14 @@ unit-to-slot map a read needs, because a request names a unit while the lineage
 is recorded between slots. Its records come from one of two places. The fast path
 folds the in-memory session tree projection's records once per projection state
 and serves later requests from that fold while the projection hands out the same
-`nodes` object. It is taken only when the projection is seeded for this store, not
-a failed seed's stand-in (`seed_given_up`), and COMPLETE (no head fault at seed,
+`nodes` object. A request that finds the projection unseeded seeds it first
+(`ensure_seeded`, idempotent), so the store is scanned once per process rather than
+once per request. Before a grant from the cached fold, the named unit and every held
+record citing the creator its slot chain was placed under are re-read by name and
+must still read cleanly with the same slot and creator; otherwise the request takes
+the scan, so a held record whose bytes are gone (a checkpoint written before a partial
+removal) cannot grant. The fast path is taken only when the projection is seeded for this
+store, not a failed seed's stand-in (`seed_given_up`), and COMPLETE (no head fault at seed,
 nothing past the cap, no open decision or spawn re-read fault in `_fault_sids`;
 a later clean re-read of the unit clears its fault and a forgotten or evicted unit
 takes its fault with it); and only when every unit the request names is held, or
