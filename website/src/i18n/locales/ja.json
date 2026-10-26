@@ -9481,6 +9481,10 @@
       "tooltip": "この設定は {{productName}} の実行中には変更できません。保存した値は保持され、次に {{productName}} を再起動したときに適用されます（設定 → バージョン情報、または起動したターミナルから）。",
       "schema_unavailable": "この設定に再起動が必要かどうかを確認できませんでした。"
     },
+    "lockedByPolicyBadge": {
+      "label": "ポリシーによりロック",
+      "tooltip": "この設定は組織のポリシーで管理されています。ここで変更しても反映されません。"
+    },
     "directDeploy": {
       "deploy_via_agent": "エージェント経由でデプロイ",
       "deploy_as_permanent": "無期限でデプロイ",
@@ -14410,6 +14414,7 @@
         "loading_graph_data": "グラフデータを読み込み中…",
         "memory_graph": "メモリグラフ",
         "no_memory_data_to_visualize_add_preferences_proj": "可視化するメモリデータがありません。まず優先設定、プロジェクト、またはレッスンを追加してください。",
+        "partial_notice": "ここにはメモリの一部だけが表示されているため、検索ではこれらのノードしか見つかりません。",
         "refresh": "更新",
         "search_memory_nodes": "メモリノードを検索",
         "search_nodes": "ノードを検索…"

@@ -201,6 +201,7 @@ from kiro_crew.config.section_builders import (  # noqa: F401
     _build_wecom_config,
     _build_weixin_config,
     _build_whatsapp_config,
+    _build_work_ledger_config,
     coerce_runtime_ceiling,
 )
 from kiro_crew.config.sections import (  # noqa: F401
@@ -924,6 +925,7 @@ if TYPE_CHECKING:  # every owner-defined name this module forwards, for type che
         agent_alias_snapshot,
         default_template,
         dispatch_kiro_agent,
+        materialized_snapshot_complete,
         member_template_id,
         next_config_load_ticket,
         publish_agent_alias_snapshot,

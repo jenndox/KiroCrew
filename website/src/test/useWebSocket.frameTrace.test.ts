@@ -306,6 +306,20 @@ const FRAME_CASES: Array<[string, Frame[], Frame[]]> = [
     { type: 'slot_projection', data: { slot: `dashboard:${BACKGROUND}` } },
     { type: 'slot_projection', data: {} },
   ]],
+  // A non-work slot fold frame as the gateway sends it now (no value) and as it
+  // sent it before (with one): the router must take the same effects for both.
+  ['slot_projection workstreams with a value', [{ type: 'slots', data: [
+    { key: ACTIVE, title: 'Active', last_ts: TS },
+    { key: BACKGROUND, title: 'Background', last_ts: TS, created_by: ACTIVE },
+  ] }], [
+    { type: 'slot_projection', data: { slot: `dashboard:${BACKGROUND}`, fold: 'workstreams', revision: 4, value: { streams: [] } } },
+  ]],
+  ['slot_projection workstreams without a value', [{ type: 'slots', data: [
+    { key: ACTIVE, title: 'Active', last_ts: TS },
+    { key: BACKGROUND, title: 'Background', last_ts: TS, created_by: ACTIVE },
+  ] }], [
+    { type: 'slot_projection', data: { slot: `dashboard:${BACKGROUND}`, fold: 'workstreams', revision: 4 } },
+  ]],
   ['session_summary', [], [{ type: 'session_summary', data: { key: ACTIVE } }, { type: 'session_summary', data: {} }]],
   ['pins_changed', [], [{ type: 'pins_changed', data: { slot_key: ACTIVE } }, { type: 'pins_changed', data: {} }]],
   ['artifact_update', [], [{ type: 'artifact_update', data: { slug: 'doc' } }]],
@@ -435,7 +449,7 @@ const FRAME_CASES: Array<[string, Frame[], Frame[]]> = [
       { type: 'other', data: {} },
     ] } },
   ]],
-  ['subagent status and text', [], [
+  ['subagent status and text dispatch nothing', [], [
     { type: 'subagent_status', data: { slot: ACTIVE, running: 1 } },
     { type: 'subagent_status', data: { running: 1 } },
     { type: 'subagent_text', data: { slot: ACTIVE, id: 'sa-1', text: 't' } },
@@ -1022,6 +1036,14 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
     'query invalidateQueries ["command-center","slot-b","work"] {"exact":true} {"cancelRefetch":false}',
     'query invalidateQueries ["command-center","slot-a","work"] {"exact":true} {"cancelRefetch":false}',
   ],
+  "slot_projection workstreams with a value": [
+    'query invalidateQueries ["command-center","slot-b","work"] {"exact":true} {"cancelRefetch":false}',
+    'query invalidateQueries ["command-center","slot-a","work"] {"exact":true} {"cancelRefetch":false}',
+  ],
+  "slot_projection workstreams without a value": [
+    'query invalidateQueries ["command-center","slot-b","work"] {"exact":true} {"cancelRefetch":false}',
+    'query invalidateQueries ["command-center","slot-a","work"] {"exact":true} {"cancelRefetch":false}',
+  ],
   "session_summary": [
     'query invalidateQueries ["session-summary","slot-a"]',
   ],
@@ -1300,10 +1322,8 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
     'frame',
     'cancel-frame 3',
   ],
-  "subagent status and text": [
-    'action dashboard/sseSubagentStatus {"slot":"slot-a","running":1}',
-    'action dashboard/sseSubagentText {"slot":"slot-a","id":"sa-1","text":"t"}',
-  ],
+  // Every sub-agent surface reads the chat slice's per-agent frames instead.
+  "subagent status and text dispatch nothing": [],
   "app_reload": [
     'event mc:app-reload {"app":"notes"}',
   ],
@@ -1476,7 +1496,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'query fetchQuery ["workflow-runs-reconcile"] {"staleTime":0,"gcTime":30000,"retry":false}',
     'action chat/resyncWaitingSideConversations/pending',
     'action chat/clearSubagentsForSnapshot undefined',
-    'send {"type":"subscribe_subagents"}',
+    'send {"type":"subscribe_subagents","slots":["slot-a"]}',
     'send {"type":"subscribe_logs"}',
     'send {"type":"slot_focused","slot":"slot-a","announce":true}',
     'action chat/reconcileWorkflowRuns []',
@@ -1513,7 +1533,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'action chat/resyncWaitingSideConversations/pending',
     'action chat/refreshSlot/pending',
     'action chat/clearSubagentsForSnapshot undefined',
-    'send {"type":"subscribe_subagents"}',
+    'send {"type":"subscribe_subagents","slots":["slot-a"]}',
     'send {"type":"slot_focused","slot":"slot-a","announce":true}',
     'action dashboard/fetchSlots/fulfilled',
     'action chat/reconcileWorkflowRuns []',
@@ -1561,7 +1581,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'action chat/resyncWaitingSideConversations/pending',
     'action chat/refreshSlot/pending',
     'action chat/clearSubagentsForSnapshot undefined',
-    'send {"type":"subscribe_subagents"}',
+    'send {"type":"subscribe_subagents","slots":["slot-a"]}',
     'send {"type":"slot_focused","slot":"slot-a","announce":true}',
     'action dashboard/fetchSlots/fulfilled',
     'action chat/reconcileWorkflowRuns []',
@@ -1584,7 +1604,7 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'query fetchQuery ["workflow-runs-reconcile"] {"staleTime":0,"gcTime":30000,"retry":false}',
     'action chat/resyncWaitingSideConversations/pending',
     'action chat/clearSubagentsForSnapshot undefined',
-    'send {"type":"subscribe_subagents"}',
+    'send {"type":"subscribe_subagents","slots":["slot-a"]}',
     'send {"type":"slot_focused","slot":"slot-a","announce":true}',
     'action chat/reconcileWorkflowRuns []',
     'query setQueryData ["command-center","workflows"]',

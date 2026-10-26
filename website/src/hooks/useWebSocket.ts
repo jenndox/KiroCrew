@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { isLookPreviewFrame } from '../utils/lookPreview'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAppDispatch } from '../store'
-import { sseTodoUpdate, sseMcpReportUpdate, sseSlotTitle, triggerRefresh, fetchSlots, remoteSlotRead, sseSubagentStatus, sseSubagentText, type SubagentDetail } from '../store/dashboardSlice'
+import { sseTodoUpdate, sseMcpReportUpdate, sseSlotTitle, triggerRefresh, fetchSlots, remoteSlotRead } from '../store/dashboardSlice'
 import { addNotification, ackNotificationByTs, unackNotificationByTs, clearAllNotifications } from '../store/notificationsSlice'
 import { dispatchMcNotification, dispatchLiveNotification } from './notificationEvent'
 import {
@@ -119,6 +119,8 @@ export const WS_SILENCE_CHECK_MS = 5_000
 export const WS_SILENCE_MAX_MS = 300_000
 
 /** Single multiplexed WebSocket replacing all SSE + polling connections. */
+const getDashboardState = () => store.getState().dashboard
+
 export function useWebSocket() {
   const dispatch = useAppDispatch()
   const queryClient = useQueryClient()
@@ -141,7 +143,7 @@ export function useWebSocket() {
   const syncWorkflowRuns = useWorkflowRunReconcile(dispatch, queryClient)
   const buffers = useStreamBuffers({ dispatch, socket, onActiveSlotFlushed: voice.speakStreamedDelta })
   const slotList = useSlotListSync(dispatch, queryClient, buffers)
-  const bundle = useBundleReload(dispatch)
+  const bundle = useBundleReload(dispatch, getDashboardState)
   const chatStream = useChatStream({ dispatch, buffers, voice, reconnectingRef })
   const turnCompletion = useTurnCompletion({ dispatch, queryClient, reconnectingRef })
 
@@ -832,12 +834,6 @@ export function useWebSocket() {
             break
           case 'update_progress':
             handleUpdateProgress(dispatch, data)
-            break
-          case 'subagent_status':
-            if (data.slot) dispatch(sseSubagentStatus(data as { running: number; slot: string; agents?: SubagentDetail[] }))
-            break
-          case 'subagent_text':
-            if (data.slot && data.id) dispatch(sseSubagentText(data as { slot: string; id: string; text: string }))
             break
           case 'refine':
             // Handled by ProjectsPage via Redux

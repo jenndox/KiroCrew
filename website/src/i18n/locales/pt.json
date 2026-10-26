@@ -9767,6 +9767,10 @@
       "tooltip": "Esta configuração não pode mudar enquanto o {{productName}} está em execução. O valor salvo é mantido e aplicado na próxima vez que o {{productName}} reiniciar (Configurações → Sobre, ou o terminal de onde você o iniciou).",
       "schema_unavailable": "Não foi possível verificar se esta configuração exige reinicialização."
     },
+    "lockedByPolicyBadge": {
+      "label": "Bloqueado por política",
+      "tooltip": "A política da sua organização controla esta configuração. Uma alteração feita aqui não tem efeito."
+    },
     "directDeploy": {
       "deploy_via_agent": "Implantar via agente",
       "deploy_as_permanent": "Implantar como permanente",
@@ -14876,6 +14880,7 @@
         "loading_graph_data": "Carregando dados do grafo…",
         "memory_graph": "Grafo de memória",
         "no_memory_data_to_visualize_add_preferences_proj": "Nenhum dado de memória para visualizar. Adicione preferências, projetos ou lições primeiro.",
+        "partial_notice": "Apenas parte da sua memória é exibida aqui, então a busca encontra só estes nós.",
         "refresh": "Atualizar",
         "search_memory_nodes": "Buscar nós de memória",
         "search_nodes": "Buscar nós…"

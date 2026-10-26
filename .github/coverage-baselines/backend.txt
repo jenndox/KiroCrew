@@ -30,7 +30,6 @@ src/kiro_crew/apps/builtins/mochi/watchlist_file.py 59.3   # 207/349
 src/kiro_crew/apps/builtins/mochi/watchlist_service.py 65.3   # 109/167
 src/kiro_crew/apps/builtins/ops_mission_control/backend/providers/cloudwatch.py 58.9   # 116/197
 src/kiro_crew/apps/builtins/ops_mission_control/backend/providers/http.py 53.8   # 35/65
-src/kiro_crew/apps/builtins/ops_mission_control/backend/providers/pagerduty.py 68.8   # 75/109
 src/kiro_crew/apps/builtins/workflows/server.py 61.2   # 82/134
 src/kiro_crew/cli_cloud.py 61.2   # 178/291
 src/kiro_crew/cloud/ui.py 51.4   # 90/175
@@ -41,7 +40,6 @@ src/kiro_crew/conpty.py 27.9   # 12/43
 src/kiro_crew/dashboard/_types.py 0.0   # 0/3
 src/kiro_crew/dashboard/handlers/weixin_qr.py 47.0   # 119/253
 src/kiro_crew/dashboard/handlers_channel.py 40.4   # 84/208
-src/kiro_crew/dashboard/ws.py 64.4   # 130/202
 src/kiro_crew/discord/gateway.py 19.6   # 10/51
 src/kiro_crew/emoji_list.py 0.0   # 0/1
 src/kiro_crew/instances/ssm_token_mint.py 21.5   # 17/79
