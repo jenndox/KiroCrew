@@ -22,26 +22,6 @@ from kiro_crew.testing.wait import async_wait_until, wait_until
 pytestmark = pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX guest paths")
 
 
-@pytest.fixture(autouse=True)
-def _drain_asyncio_transports():
-    """Collect asyncio transport cycles before the next test can be blamed for them.
-
-    Tests in this module run asyncio subprocesses via asyncio.run().  When the
-    loop closes, any BaseSubprocessTransport whose subprocess has not yet been
-    awaited forms a reference cycle with its protocol.  CPython's cyclic
-    collector defers that cycle until the next GC pass, which may land inside a
-    completely unrelated test — attributing an "Event loop is closed" unraisable
-    to the innocent victim.  Collecting here, after each test in this module
-    finishes, pays the GC cost at the right place and keeps the unraisable (if
-    any) attached to the test that leaked the transport.
-    """
-    import gc
-
-    yield
-    gc.collect()
-    gc.collect()
-
-
 SID = "sess-1"
 _ENDED = (link_mod.REFUSED, link_mod.LOST, link_mod.FINISHED)
 ECHO = [

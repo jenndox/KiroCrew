@@ -1266,3 +1266,19 @@ def _no_leaked_interleave_hook():
             "earlier test leaked it (this test is the victim, not the cause). "
             "Set it with monkeypatch.setattr so it reverts even on failure."
         )
+
+
+@pytest.fixture(autouse=True)
+def _drain_gc_cycles():
+    """Collect GC cycles created by this test before the next test runs.
+
+    asyncio.run() tests can leave BaseSubprocessTransport / PosixPath reference
+    cycles that CPython defers until the next GC pass, which may land inside an
+    unrelated later test on the same xdist worker.  Two passes cover chains of
+    two-level cycles (transport -> protocol -> path).
+    """
+    import gc
+
+    yield
+    gc.collect()
+    gc.collect()
